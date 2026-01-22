@@ -18,7 +18,7 @@ from signal_detector import SignalDetector
 class CryptoTradingBot:
     def __init__(self):
         """Initialise le bot"""
-        self.exchange = ccxt.binance({
+        self.exchange = ccxt.bybit({
             'enableRateLimit': True,
             'options': {'defaultType': 'spot'}
         })
