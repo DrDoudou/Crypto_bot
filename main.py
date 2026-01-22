@@ -17,12 +17,23 @@ from signal_detector import SignalDetector
 
 class CryptoTradingBot:
     def __init__(self):
-        """Initialise le bot"""
+        """Initialise le bot avec support Proxy SOCKS5"""
+        # Récupération des identifiants depuis les variables Railway
+        vpn_user = os.getenv('VPN_USER')
+        vpn_pass = os.getenv('VPN_PASS')
+        
+        # URL du proxy SOCKS5 NordVPN (Suisse)
+        # Note : On utilise le port 1080 pour le SOCKS5
+        proxy_url = f'socks5://{vpn_user}:{vpn_pass}@ch339.nordvpn.com:1080'
+        
         self.exchange = ccxt.bybit({
             'enableRateLimit': True,
-            'options': {'defaultType': 'spot'}
+            'options': {'defaultType': 'spot'},
+            'proxies': {
+                'http': proxy_url,
+                'https': proxy_url,
+            }
         })
-        
         # Telegram notifier
         telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
