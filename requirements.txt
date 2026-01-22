@@ -4,4 +4,4 @@ numpy>=1.24.0
 schedule>=1.2.0
 requests>=2.31.0
 python-telegram-bot>=20.0
-pysocks
+PySocks>=1.7.1
