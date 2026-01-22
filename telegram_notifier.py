@@ -12,11 +12,11 @@ class TelegramNotifier:
         Initialise le notifier Telegram
         
         Args:
-            bot_token: 8416764497:AAHtJrJjSHVoWWhAF0hwCj28lAl2feEUZ0k
-            chat_id: 7437060845
+            bot_token: Token du bot Telegram
+            chat_id: ID du chat Telegram
         """
-        self.bot_token = 8416764497:AAHtJrJjSHVoWWhAF0hwCj28lAl2feEUZ0k
-        self.chat_id = 7437060845
+        self.bot_token = bot_token
+        self.chat_id = chat_id
         self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         
         if bot_token and chat_id:
