@@ -55,7 +55,7 @@ class CryptoTradingBot:
         # Watchlist
         self.watchlist = [
             'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
-            'ADA/USDT', 'DOGE/USDT', 'LINK/USDT', 'AVAX/USDT', 'MATIC/USDT',
+            'ADA/USDT', 'DOGE/USDT', 'LINK/USDT', 'AVAX/USDT', 'POL/USDT',
             'DOT/USDT', 'UNI/USDT', 'LTC/USDT', 'ATOM/USDT', 'ETC/USDT'
         ]
         
@@ -92,7 +92,7 @@ class CryptoTradingBot:
         
         return df
 
-    def fetch_data(self, symbol, timeframe, limit=100):
+    def fetch_data(self, symbol, timeframe, limit=500):
         """Récupère les données historiques"""
         try:
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
@@ -102,10 +102,11 @@ class CryptoTradingBot:
             # Calculer tous les indicateurs
             df = self.calculate_indicators(df)
             
+            print(f"  ✓ {symbol} {timeframe}: {len(df)} bougies")
             return df
             
         except Exception as e:
-            print(f"❌ Erreur {symbol} {timeframe}: {e}")
+            print(f"  ❌ Erreur {symbol} {timeframe}: {e}")
             return None
 
     def scan_market(self):
