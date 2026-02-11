@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Bot de trading crypto - Cloud 24/7
-Scan automatique toutes les 30 minutes avec support Proxy VPN
+Bot de trading crypto avec analyse IA Claude
+Scan automatique toutes les 30 minutes avec détection LONG et SHORT
 """
 
 import os
@@ -11,62 +11,70 @@ import ccxt
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from telegram_notifier import TelegramNotifier
-from signal_detector import SignalDetector
+from telegram_notifier_ai import TelegramNotifier
+from claude_analyst import ClaudeAnalyst
 
-class CryptoTradingBot:
+class ClaudeCryptoBot:
     def __init__(self):
-        """Initialise le bot avec support Proxy SOCKS5"""
+        """Initialise le bot avec Claude AI"""
         
-        # Récupération des identifiants VPN
-        vpn_user = os.getenv('VPN_USER')
-        vpn_pass = os.getenv('VPN_PASS')
+        print("="*60)
+        print("🚀 INITIALISATION CLAUDE AI CRYPTO BOT")
+        print("="*60)
         
-        # Configuration du proxy SOCKS5
-        if vpn_user and vpn_pass:
-            proxy_url = f'socks5://{vpn_user}:{vpn_pass}@nl.socks.nordhold.net:1080'
-            print("🔐 VPN activé")
-        else:
-            proxy_url = None
-            print("⚠️ VPN non configuré, connexion directe")
-        
-        # Configuration Bybit avec proxy si disponible
-        exchange_config = {
+        # Configuration Exchange (on passe à Binance, plus fiable)
+        print("📡 Configuration exchange...")
+        self.exchange = ccxt.binance({
             'enableRateLimit': True,
             'options': {'defaultType': 'spot'}
-        }
-        
-        if proxy_url:
-            exchange_config['proxies'] = {
-                'http': proxy_url,
-                'https': proxy_url,
-            }
-        
-        self.exchange = ccxt.bybit(exchange_config)
+        })
+        print("✅ Exchange: Binance")
         
         # Initialisation Telegram
+        print("📱 Configuration Telegram...")
         telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.notifier = TelegramNotifier(telegram_token, telegram_chat_id)
         
-        # Détecteur de signaux
-        self.signal_detector = SignalDetector()
+        # Initialisation Claude AI
+        print("🧠 Configuration Claude AI...")
+        anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
         
-        # Watchlist
+        if not anthropic_api_key:
+            raise ValueError("❌ ANTHROPIC_API_KEY manquante dans les variables d'environnement")
+        
+        self.analyst = ClaudeAnalyst(anthropic_api_key)
+        print("✅ Claude AI connecté")
+        
+        # Watchlist (réduite pour commencer, ajoute selon budget)
         self.watchlist = [
-            'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
-            'ADA/USDT', 'DOGE/USDT', 'LINK/USDT', 'AVAX/USDT', 'POL/USDT',
-            'DOT/USDT', 'UNI/USDT', 'LTC/USDT', 'ATOM/USDT', 'ETC/USDT'
+            'BTC/USDT',
+            'ETH/USDT', 
+            'SOL/USDT',
+            'BNB/USDT',
+            'XRP/USDT',
         ]
         
         self.timeframes = ['1h', '4h', '1d']
         self.sent_signals = {}
         
-        print("🚀 Bot initialisé avec succès!")
+        # Stats quotidiennes
+        self.daily_stats = {
+            'total_analyses': 0,
+            'total_signals': 0,
+            'long_signals': 0,
+            'short_signals': 0,
+            'confidences': [],
+            'confluences': [],
+            'top_coins': []
+        }
+        
+        print(f"✅ Bot initialisé avec succès!")
         print(f"📊 Surveillance de {len(self.watchlist)} coins")
+        print("="*60)
 
     def calculate_indicators(self, df):
-        """Calcule TOUS les indicateurs nécessaires"""
+        """Calcule les indicateurs techniques"""
         # RSI
         delta = df['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -86,101 +94,216 @@ class CryptoTradingBot:
         df['bb_middle'] = sma
         df['bb_lower'] = sma - (std * 2)
         
-        # ✅ CALCUL DES DISTANCES (MANQUANT AVANT)
-        df['dist_bb_lower'] = ((df['close'] - df['bb_lower']) / df['close'] * 100)
-        df['dist_bb_upper'] = ((df['bb_upper'] - df['close']) / df['close'] * 100)
-        
         return df
 
     def fetch_data(self, symbol, timeframe, limit=500):
-        """Récupère les données historiques"""
+        """Récupère les données historiques avec retry"""
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                
+                # Calculer les indicateurs
+                df = self.calculate_indicators(df)
+                
+                return df
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"  ⚠️ Tentative {attempt+1} échouée pour {symbol} {timeframe}, retry...")
+                    time.sleep(2)
+                else:
+                    print(f"  ❌ Erreur {symbol} {timeframe} après {max_retries} tentatives: {str(e)[:100]}")
+                    return None
+        
+        return None
+
+    def get_market_context(self):
+        """Récupère le contexte macro du marché (basé sur BTC)"""
         try:
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            # Récupérer données BTC 1D
+            df_btc = self.fetch_data('BTC/USDT', '1d', limit=30)
             
-            # Calculer tous les indicateurs
-            df = self.calculate_indicators(df)
+            if df_btc is None or len(df_btc) < 10:
+                return "Contexte marché indisponible"
             
-            print(f"  ✓ {symbol} {timeframe}: {len(df)} bougies")
-            return df
+            latest = df_btc.iloc[-1]
+            price = latest['close']
+            ema_200 = latest['ema_200']
+            rsi = latest['rsi']
+            
+            # Calculer tendance
+            pct_from_ema = ((price - ema_200) / ema_200) * 100
+            
+            if pct_from_ema > 5:
+                trend = "BTC en uptrend (bull market)"
+            elif pct_from_ema < -5:
+                trend = "BTC en downtrend (bear market)"
+            else:
+                trend = "BTC en range (marché neutre)"
+            
+            # Momentum
+            if rsi > 60:
+                momentum = "momentum haussier"
+            elif rsi < 40:
+                momentum = "momentum baissier"
+            else:
+                momentum = "momentum neutre"
+            
+            return f"{trend}, {momentum}. BTC: ${price:,.0f} ({pct_from_ema:+.1f}% EMA200)"
             
         except Exception as e:
-            print(f"  ❌ Erreur {symbol} {timeframe}: {e}")
-            return None
+            print(f"⚠️ Erreur contexte marché: {e}")
+            return "Contexte marché standard"
 
     def scan_market(self):
-        """Analyse tous les coins de la watchlist"""
+        """Analyse tous les coins via Claude AI"""
         print("\n" + "="*60)
         print(f"🔍 SCAN MARCHÉ - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60)
         
+        # Récupérer contexte macro
+        market_context = self.get_market_context()
+        print(f"🌍 {market_context}")
+        print("="*60)
+        
         all_signals = []
+        analyzed_count = 0
         
         for symbol in self.watchlist:
             try:
-                print(f"📊 Analyse {symbol}...")
+                print(f"\n🔍 Analyse {symbol} via Claude AI...")
                 data = {}
                 
                 # Récupérer données multi-timeframe
                 for tf in self.timeframes:
                     df = self.fetch_data(symbol, tf)
-                    if df is not None and len(df) >= 200:  # Assez de données pour EMA 200
+                    if df is not None and len(df) >= 200:  # Assez de données
                         data[tf] = df
-                    time.sleep(0.3)
+                        print(f"  ✓ {tf}: {len(df)} bougies")
+                    time.sleep(0.5)  # Rate limiting
                 
-                # Détecter signaux si données complètes
-                if '4h' in data:
-                    signals = self.signal_detector.detect_signals(symbol, data)
+                # Analyser avec Claude si données complètes
+                if '4h' in data and '1d' in data:
+                    analyzed_count += 1
+                    self.daily_stats['total_analyses'] += 1
                     
-                    if signals:
-                        all_signals.extend(signals)
+                    print(f"  🧠 Envoi à Claude pour analyse...")
+                    
+                    signal = self.analyst.analyze_coin(
+                        symbol=symbol,
+                        data_1h=data.get('1h'),
+                        data_4h=data['4h'],
+                        data_1d=data['1d'],
+                        market_context=market_context
+                    )
+                    
+                    if signal:
+                        print(f"  ✅ Signal {signal['signal']} détecté (confidence: {signal['confidence']}/10)")
+                        all_signals.append(signal)
                         
-                        for signal in signals:
-                            signal_key = f"{symbol}_{signal['type']}_{signal['timeframe']}"
-                            last_sent = self.sent_signals.get(signal_key, 0)
-                            
-                            # Envoyer si > 6h depuis dernier signal
-                            if time.time() - last_sent > 6 * 3600:
-                                self.notifier.send_signal(signal)
-                                self.sent_signals[signal_key] = time.time()
-                                print(f"✅ Signal {signal['type']} envoyé pour {symbol}")
+                        # Stats
+                        self.daily_stats['total_signals'] += 1
+                        if signal['signal'] == 'LONG':
+                            self.daily_stats['long_signals'] += 1
+                        else:
+                            self.daily_stats['short_signals'] += 1
+                        
+                        self.daily_stats['confidences'].append(signal['confidence'])
+                        self.daily_stats['confluences'].append(signal.get('confluence_factors', 0))
+                        
+                        # Envoyer si nouveau signal
+                        signal_key = f"{symbol}_{signal['signal']}_{signal['timeframe']}"
+                        last_sent = self.sent_signals.get(signal_key, 0)
+                        
+                        # Envoyer si > 6h depuis dernier signal
+                        if time.time() - last_sent > 6 * 3600:
+                            self.notifier.send_claude_signal(signal)
+                            self.sent_signals[signal_key] = time.time()
+                            print(f"  📤 Signal envoyé sur Telegram")
+                        else:
+                            print(f"  ⏳ Signal déjà envoyé récemment, skip")
+                    else:
+                        print(f"  💤 Pas de setup valide")
                 else:
-                    print(f"⚠️ Données insuffisantes pour {symbol}")
+                    print(f"  ⚠️ Données insuffisantes pour {symbol}")
                     
             except Exception as e:
-                print(f"❌ Erreur lors de l'analyse de {symbol}: {e}")
+                print(f"  ❌ Erreur lors de l'analyse de {symbol}: {e}")
                 continue
         
         # Résumé
         print(f"\n{'='*60}")
-        print(f"📈 RÉSUMÉ DU SCAN")
+        print(f"📊 RÉSUMÉ DU SCAN")
         print(f"{'='*60}")
-        print(f"Signaux détectés: {len(all_signals)}")
+        print(f"🔍 Coins analysés: {analyzed_count}")
+        print(f"📡 Signaux détectés: {len(all_signals)}")
         
         if all_signals:
-            longs = sum(1 for s in all_signals if s['type'] == 'LONG')
-            shorts = sum(1 for s in all_signals if s['type'] == 'SHORT')
-            print(f"  - LONG: {longs}")
-            print(f"  - SHORT: {shorts}")
+            longs = sum(1 for s in all_signals if s['signal'] == 'LONG')
+            shorts = sum(1 for s in all_signals if s['signal'] == 'SHORT')
+            print(f"  • LONG: {longs}")
+            print(f"  • SHORT: {shorts}")
+            
+            avg_conf = np.mean([s['confidence'] for s in all_signals])
+            print(f"🎯 Confidence moyenne: {avg_conf:.1f}/10")
         else:
-            print("Aucun signal fort détecté")
+            print("💤 Aucun setup valide détecté")
+            print("✅ Claude reste vigilant - Protection du capital active")
         
         print(f"\n⏰ Prochain scan dans 30 minutes...")
 
     def run_scheduled_scan(self):
+        """Wrapper pour le scan avec error handling"""
         try:
             self.scan_market()
         except Exception as e:
-            print(f"❌ Erreur lors du scan: {e}")
+            print(f"❌ Erreur critique lors du scan: {e}")
             try:
-                self.notifier.send_error(str(e))
+                self.notifier.send_error(f"Erreur scan: {str(e)[:100]}")
             except:
                 pass
     
+    def send_daily_summary(self):
+        """Envoie le résumé quotidien"""
+        try:
+            stats = self.daily_stats.copy()
+            
+            if stats['confidences']:
+                stats['avg_confidence'] = np.mean(stats['confidences'])
+            else:
+                stats['avg_confidence'] = 0
+            
+            if stats['confluences']:
+                stats['avg_confluence'] = np.mean(stats['confluences'])
+            else:
+                stats['avg_confluence'] = 0
+            
+            stats['top_coins'] = self.watchlist[:5]
+            
+            self.notifier.send_daily_summary(stats)
+            
+            # Reset stats
+            self.daily_stats = {
+                'total_analyses': 0,
+                'total_signals': 0,
+                'long_signals': 0,
+                'short_signals': 0,
+                'confidences': [],
+                'confluences': [],
+                'top_coins': []
+            }
+            
+        except Exception as e:
+            print(f"❌ Erreur envoi résumé quotidien: {e}")
+    
     def start(self):
+        """Démarre le bot"""
         print("\n" + "="*60)
-        print("🤖 DÉMARRAGE DU BOT CRYPTO")
+        print("🧠 DÉMARRAGE CLAUDE AI CRYPTO BOT")
         print("="*60)
         
         # Premier scan immédiat
@@ -189,23 +312,33 @@ class CryptoTradingBot:
         # Programmer scans toutes les 30 min
         schedule.every(30).minutes.do(self.run_scheduled_scan)
         
+        # Programmer résumé quotidien à 20h
+        schedule.every().day.at("20:00").do(self.send_daily_summary)
+        
         print("\n✅ Bot en mode surveillance 24/7")
-        print("🔔 Vous recevrez des alertes Telegram pour chaque signal")
+        print("🧠 Claude AI analyse les marchés toutes les 30 min")
+        print("📱 Vous recevrez des alertes Telegram pour chaque signal")
         
         while True:
             schedule.run_pending()
             time.sleep(60)
 
 def main():
-    if not os.getenv('TELEGRAM_BOT_TOKEN'):
-        print("❌ ERREUR: Variable TELEGRAM_BOT_TOKEN manquante")
+    """Point d'entrée principal"""
+    
+    # Vérifier variables d'environnement
+    required_vars = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'ANTHROPIC_API_KEY']
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        print("❌ ERREUR: Variables d'environnement manquantes:")
+        for var in missing_vars:
+            print(f"  - {var}")
+        print("\n💡 Configure ces variables avant de démarrer le bot")
         return
     
-    if not os.getenv('TELEGRAM_CHAT_ID'):
-        print("❌ ERREUR: Variable TELEGRAM_CHAT_ID manquante")
-        return
-    
-    bot = CryptoTradingBot()
+    # Démarrer le bot
+    bot = ClaudeCryptoBot()
     bot.start()
 
 if __name__ == "__main__":
